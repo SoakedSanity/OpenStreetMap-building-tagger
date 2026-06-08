@@ -3,7 +3,6 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import geopandas as gpd
 import duckdb as ddb
-from deep_translator import GoogleTranslator
 import os
 import plotly.express as px
 from IPython.display import display, HTML

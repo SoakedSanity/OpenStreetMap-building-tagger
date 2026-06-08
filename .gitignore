@@ -3,5 +3,6 @@ __pycache__/
 *.parquet
 *.pbf
 test.ipynb
+osm_region.ipynb
 homework_01_Сахтарьек_Зачерий.ipynb
 homework_02_Сахтарьек_Зачерий.ipynb
