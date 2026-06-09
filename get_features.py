@@ -3,6 +3,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import geopandas as gpd
 from shapely.geometry import Polygon, LineString, MultiPolygon
+from shapely.geometry.polygon import orient
 import seaborn as sns
 import matplotlib.colors as mcolors
 from statsmodels.stats.outliers_influence import variance_inflation_factor
@@ -12,10 +13,30 @@ def compute_features(buildings_train_path, output_path):
     buildings_train = gpd.read_parquet(buildings_train_path)
     
     buildings_train = buildings_train.to_crs(32637)
+    
+    def has_few_coords(geom):
+        if geom.is_empty:
+            return True
+        if geom.geom_type == 'Polygon':
+            if len(geom.exterior.coords) <= 3:
+                return False
+            for interior in geom.interiors:
+                if len(interior.coords) <= 3:
+                    return False
+            return True
+        elif geom.geom_type == 'MultiPolygon':
+            return all(has_few_coords(part) for part in geom.geoms)
+        elif geom.geom_type in ['LineString', 'LinearRing']:
+            coords = list(geom.coords)
+            return len(coords) >= 4
+        else:
+            return False
+
+    buildings_train = buildings_train[buildings_train.geometry.apply(has_few_coords)]
     buildings_train['geometry'] = buildings_train['geometry'].apply(lambda geom: Polygon(geom.coords) if geom.geom_type == 'LineString' else geom)
-    buildings_train = buildings_train[~buildings_train.geometry.geom_type.isin(['Point', 'MultiPoint'])]
     buildings_train = buildings_train.explode(index_parts=False)
-    buildings_train.geometry = buildings_train.geometry.orient_polygons(exterior_cw=True)
+    
+    buildings_train.geometry = buildings_train.geometry.apply(lambda geom: orient(geom, sign=1.0))
 
     buildings_train['level_count'] = pd.to_numeric(buildings_train['levels'], errors='coerce').fillna(1).astype(float).round().astype(int)
     
@@ -37,7 +58,6 @@ def compute_features(buildings_train_path, output_path):
     buildings_train = buildings_train.set_geometry("geometry")
     
     buildings_train['perimeter'] = buildings_train.geometry.length
-    buildings_train.explore(column='perimeter', cmap='RdYlGn')
     
     buildings_train['compactness'] = buildings_train['area'] / buildings_train['perimeter']
     buildings_train['compactness_index'] = 4 * np.pi * buildings_train['area'] / buildings_train['perimeter'] ** 2
@@ -45,13 +65,6 @@ def compute_features(buildings_train_path, output_path):
     buildings_train['rectangularity'] = buildings_train['area'] / buildings_train['area_MRR']
     
     buildings_train['elongatedness'] = buildings_train['length'] / buildings_train['width']
-    
-    buildings_train['convex_hull'] = buildings_train.geometry.apply(lambda geom: geom.convex_hull)
-    buildings_train = buildings_train.set_geometry("convex_hull")
-    
-    buildings_train['convex_hull_area'] = buildings_train.geometry.area
-    buildings_train['convexity'] = buildings_train['area'] / buildings_train['convex_hull_area']
-    buildings_train = buildings_train.set_geometry("geometry")
     
     buildings_train['convex_hull'] = buildings_train.geometry.apply(lambda geom: geom.convex_hull)
     buildings_train = buildings_train.set_geometry("convex_hull")
@@ -90,13 +103,13 @@ def compute_features(buildings_train_path, output_path):
     buildings_train['convex_vertex_ratio'] = buildings_train['convex_vertex_count']/buildings_train['vertex_count']
     
     buildings_train = buildings_train.set_geometry("geometry")
-    buildings_train['inscribed_circle'] = buildings_train.maximum_inscribed_circle()
+    buildings_train['inscribed_circle'] = buildings_train.geometry.maximum_inscribed_circle()
     buildings_train = buildings_train.set_geometry("inscribed_circle")
     buildings_train['inscribed_radius'] = buildings_train.geometry.length
     buildings_train['inscribed_area_ratio'] = (np.pi * buildings_train['inscribed_radius'] ** 2) / buildings_train['area']
     
     buildings_train = buildings_train.set_geometry("geometry")
-    buildings_train['enclosed_radius'] = buildings_train.minimum_bounding_radius()
+    buildings_train['enclosed_radius'] = buildings_train.geometry.minimum_bounding_radius()
     buildings_train['enclosed_area_ratio'] = buildings_train['area'] / (np.pi * buildings_train['enclosed_radius'] ** 2)
     
     buildings_train['circular_variance'] = buildings_train['inscribed_radius'] / buildings_train['enclosed_radius']
@@ -126,7 +139,4 @@ def display_correlation_matrix(buildings_train):
     plt.show()
 
 if __name__ == "__main__":
-    buildings_train = compute_features('russia_rnd_selection.parquet', 'russia_rnd_selection_features.parquet')
-    m = buildings_train.explore(column='sinuosity', cmap='RdYlGn')
-
-    m.save("feature_map.html")
+    buildings_train = compute_features('russia_rnd_selection_2.parquet', 'russia_rnd_selection_features_2.parquet')
