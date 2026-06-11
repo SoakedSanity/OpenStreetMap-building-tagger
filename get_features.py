@@ -8,16 +8,19 @@ import seaborn as sns
 import matplotlib.colors as mcolors
 from statsmodels.stats.outliers_influence import variance_inflation_factor
 from sklearn.decomposition import PCA
+from shapely import STRtree
 
 def compute_features(buildings_train_path, output_path):
     buildings_train = gpd.read_parquet(buildings_train_path)
-    
-    buildings_train = buildings_train.to_crs(32637)
+    buildings_train = buildings_train[buildings_train['geometry'].notna()]
+    buildings_train = buildings_train.to_crs(3587)
     
     def has_few_coords(geom):
-        if geom.is_empty:
+        if geom is None:
             return True
-        if geom.geom_type == 'Polygon':
+        elif geom.is_empty:
+            return True
+        elif geom.geom_type == 'Polygon':
             if len(geom.exterior.coords) <= 3:
                 return False
             for interior in geom.interiors:
@@ -127,6 +130,77 @@ def compute_features(buildings_train_path, output_path):
 
     return buildings_train
 
+def context_metrics(build_train: gpd.GeoDataFrame, build_layer_path: str, road_layer_path: str, retail_layer_path: str, proj=3857, output='all_features.parquet'):
+
+    #transfrom to metric projection
+    build_layer = gpd.read_parquet(build_layer_path)
+    road_layer = gpd.read_parquet(road_layer_path)
+    retail_layer = gpd.read_parquet(retail_layer_path)
+
+    build_train_proj, build_proj, road_proj, retail_proj = build_train.to_crs(proj).reset_index(drop=True), build_layer.to_crs(proj).reset_index(drop=True), road_layer.to_crs(proj).reset_index(drop=True), retail_layer.to_crs(proj).reset_index(drop=True)
+
+    mask = build_train_proj.buffer(1000).union_all()
+
+    build_proj = build_proj[build_proj.intersects(mask)]
+    road_proj = road_proj[road_proj.intersects(mask)]
+    retail_proj = retail_proj[retail_proj.intersects(mask)]
+
+    #building index-tree 
+    build_tree = STRtree(build_proj.geometry.values)
+    road_tree = STRtree(road_proj.geometry.values)
+    retail_tree = STRtree(retail_proj.geometry.values)
+
+    #retail density
+    build_train_proj['self_retail_density'] = [
+        len(retail_tree.query(geom, predicate='intersects'))
+        for geom in build_train_proj.geometry
+    ]
+
+    build_train_proj['retail_density_1000'] = [
+        len(retail_tree.query(geom, predicate='dwithin', distance=1000))
+        for geom in build_train_proj.geometry
+    ]
+
+    #road near dist
+
+    build_train_proj['road_distance'] = [
+        min(
+            (road_proj.geometry.iloc[i].distance(geom)
+             for i in road_tree.query(geom, predicate='dwithin', distance=1000)),
+            default=np.inf
+        )
+        for geom in build_train_proj.geometry
+    ]
+
+    #buffer build density
+    build_train_proj['buffer_build_amount'] = [
+        len(build_tree.query(geom, predicate='dwithin', distance=1000))
+        for geom in build_train_proj.geometry
+    ]
+
+    #поправить
+    build_train_proj['buffer_build_square'] = [
+        sum(
+            build_proj.geometry.iloc[i].area
+            for i in build_tree.query(geom, predicate='dwithin', distance=1000))
+        for geom in build_train_proj.geometry
+    ]
+
+    #perimetr ratio
+    build_train_proj['shared_wall_ratio'] = [
+        sum(
+            geom.boundary.intersection(build_proj.geometry.iloc[i].boundary).length
+            for i in build_tree.query(geom, predicate='dwithin', distance=100)
+            if build_proj.geometry.iloc[i] != geom
+        ) / geom.length if geom.length > 0 else 0
+        for geom in build_train_proj.geometry
+    ]
+
+    
+    build_train_proj.to_parquet(output)
+
+
+
 def display_correlation_matrix(buildings_train):
     buildings_train_clean = buildings_train.drop(["area_MRR", "length", "width", "compactness_index", "convex_hull_area", "convex_hull_perimeter", "convex_vertex_count", "circular_variance", "inscribed_area_ratio"], axis = 1)
     corr_matrix = buildings_train_clean.corr(numeric_only=True)
@@ -140,3 +214,4 @@ def display_correlation_matrix(buildings_train):
 
 if __name__ == "__main__":
     buildings_train = compute_features('russia_rnd_selection_2.parquet', 'russia_rnd_selection_features_2.parquet')
+    all_features = context_metrics(buildings_train, r'D:\proj_IDA\building.parquet', r'D:\proj_IDA\roads.parquet', r'D:\proj_IDA\shop.parquet', output='all_features.parquet')
