@@ -4,8 +4,6 @@ import geopandas as gpd
 
 def compute_contest_layyers(ddb_path: str, output_roads_path: str = 'roads.parquet',  output_retail_path: str = 'shop.parquet', output_buildings_path: str = 'builndings.parquet'):
 
-    import duckdb as ddb
-
     ddb.sql("""
         INSTALL osmium FROM community;
         INSTALL spatial;
