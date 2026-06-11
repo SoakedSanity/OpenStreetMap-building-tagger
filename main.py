@@ -16,6 +16,7 @@ importlib.reload(load_footprints)
 importlib.reload(type_proportions)
 from load_footprints import random_selection, point_selection
 from type_proportions import building_amount, building_amount_zipf
+from create_context_layer import compute_contest_layyers
 
 layer_list = []
 
@@ -58,4 +59,4 @@ view_state = pdk.ViewState(
 r = pdk.Deck(layers=layer_list, initial_view_state=view_state)
 r.to_html("3d_map_2.html")
 
-    
+compute_contest_layyers(ddb_path='buildings_russia.osm.pbf')
